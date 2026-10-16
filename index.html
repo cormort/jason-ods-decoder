@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>捷成公文 ODS 解碼器</title>
+<meta name="description" content="在瀏覽器內讀取捷成公文系統 .ods 檔的本文，檔案不會上傳。">
+<style>
+  :root {
+    --bg: #f7f7f5; --panel: #ffffff; --text: #1f2328; --muted: #5d636b;
+    --line: #d8dadd; --accent: #1f6feb; --accent-text: #ffffff;
+    --ok: #1a7f37; --warn: #9a6700; --bad: #cf222e; --drop: #eef4ff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0f1115; --panel: #171a21; --text: #e6e8eb; --muted: #9aa1ab;
+      --line: #2c313a; --accent: #4c8dff; --accent-text: #0f1115;
+      --ok: #3fb950; --warn: #d29922; --bad: #f85149; --drop: #16233a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.6 "Noto Sans TC", "Microsoft JhengHei", "PingFang TC", system-ui, sans-serif;
+  }
+  main { max-width: 960px; margin: 0 auto; padding: 32px 16px 64px; }
+  h1 { font-size: 1.6rem; margin: 0 0 4px; }
+  .lead { color: var(--muted); margin: 0 0 24px; }
+  .privacy {
+    border-left: 4px solid var(--ok); background: var(--panel);
+    padding: 10px 14px; border-radius: 6px; margin-bottom: 20px; font-size: .95rem;
+  }
+  .drop {
+    border: 2px dashed var(--line); border-radius: 10px; background: var(--panel);
+    padding: 32px 16px; text-align: center; transition: background .15s, border-color .15s;
+  }
+  .drop.over { background: var(--drop); border-color: var(--accent); }
+  .drop p { margin: 0 0 14px; }
+  .btns { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+  button, .btn {
+    font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--text);
+    padding: 8px 14px; border-radius: 6px; cursor: pointer;
+  }
+  button.primary, .btn.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button:focus-visible, .btn:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+  input[type=file] { position: absolute; width: 1px; height: 1px; opacity: 0; }
+  #status { margin: 16px 0 8px; color: var(--muted); min-height: 1.6em; }
+  .bar { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; }
+  .bar > div { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+  .toolbar { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin: 20px 0 8px; flex-wrap: wrap; }
+  .summary { color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; background: var(--panel); border-radius: 8px; overflow: hidden; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-weight: 600; color: var(--muted); font-size: .9rem; }
+  td.name { word-break: break-all; }
+  td.num { white-space: nowrap; text-align: right; font-variant-numeric: tabular-nums; }
+  .st-ok { color: var(--ok); } .st-skip { color: var(--warn); } .st-bad { color: var(--bad); }
+  td.act { white-space: nowrap; }
+  td.act button { padding: 4px 10px; font-size: .9rem; }
+  dialog {
+    width: min(860px, calc(100vw - 32px)); max-height: calc(100vh - 64px);
+    border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--text); padding: 0;
+  }
+  dialog::backdrop { background: rgb(0 0 0 / .45); }
+  .dlg-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+  .dlg-head h2 { font-size: 1rem; margin: 0; word-break: break-all; }
+  pre {
+    margin: 0; padding: 16px; overflow: auto; max-height: calc(100vh - 160px);
+    white-space: pre-wrap; word-break: break-all;
+    font: 15px/1.8 "Noto Sans Mono CJK TC", "MingLiU", "Microsoft JhengHei", monospace;
+  }
+  details { margin-top: 32px; color: var(--muted); }
+  details p, details li { font-size: .95rem; }
+  @media (max-width: 600px) {
+    th.num, td.num { display: none; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>捷成公文 ODS 解碼器</h1>
+  <p class="lead">讀取捷成公文系統（JSODS / ODSVIEW）的 .ods 公文檔，取出本文另存成 .txt。</p>
+
+  <div class="privacy">🔒 檔案只在你的瀏覽器裡解碼，<strong>不會上傳到任何伺服器</strong>。第一次開啟需下載約 15 MB 的執行環境，之後瀏覽器會快取。</div>
+
+  <div class="drop" id="drop">
+    <p>把 .ods 檔或整個資料夾拖曳到這裡</p>
+    <div class="btns">
+      <label class="btn primary">選擇檔案<input type="file" id="pickFiles" accept=".ods,.ODS" multiple></label>
+      <label class="btn">選擇資料夾<input type="file" id="pickDir" webkitdirectory multiple></label>
+    </div>
+  </div>
+
+  <div id="status">正在載入解碼環境…</div>
+  <div class="bar"><div id="bar"></div></div>
+
+  <div class="toolbar" id="toolbar" hidden>
+    <span class="summary" id="summary"></span>
+    <button class="primary" id="zipAll" disabled>全部下載（ZIP）</button>
+  </div>
+  <table id="table" hidden>
+    <thead><tr><th>檔案</th><th class="c-status">結果</th><th class="num">字數</th><th></th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+
+  <details>
+    <summary>說明與限制</summary>
+    <ul>
+      <li>只處理捷成公文格式（檔頭 <code>JASON</code>）。同副檔名的 LibreOffice 試算表會顯示「非捷成格式」，請用試算表軟體開啟。</li>
+      <li>輸出的是公文的文字內容（本文；函稿含主旨與說明），不含發文機關、日期、文號等套印欄位與版面。</li>
+      <li>每份約 1–5 秒。大量檔案建議用桌面版批次工具。</li>
+      <li>本工具與原廠無關，僅為讓停產系統的舊檔仍可閱讀。</li>
+    </ul>
+  </details>
+</main>
+
+<dialog id="dlg">
+  <div class="dlg-head">
+    <h2 id="dlgTitle"></h2>
+    <div class="btns"><button id="dlgDl">下載 .txt</button><button id="dlgClose">關閉</button></div>
+  </div>
+  <pre id="dlgText"></pre>
+</dialog>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const LABEL = {
+    fast: ['已解出', 'st-ok'], auto: ['已解出', 'st-ok'], cache: ['已解出', 'st-ok'],
+    not_jason: ['非捷成格式', 'st-skip'], unknown: ['無法解碼', 'st-bad'], error: ['錯誤', 'st-bad'],
+  };
+  const worker = new Worker('worker.js');
+  const items = [];          // {id, path, status, text, chars, tr}
+  const queue = [];
+  let ready = false, busy = false, done = 0;
+
+  worker.onmessage = (ev) => {
+    const m = ev.data;
+    if (m.type === 'ready') { ready = true; setStatus('就緒，請選擇檔案。'); pump(); return; }
+    if (m.type === 'fatal') { setStatus('解碼環境載入失敗：' + m.error + '（請確認網路連線後重新整理）'); return; }
+    const it = items[m.id];
+    Object.assign(it, { status: m.status, text: m.text, chars: m.chars });
+    renderRow(it);
+    done++; busy = false;
+    updateProgress();
+    pump();
+  };
+
+  function setStatus(s) { $('status').textContent = s; }
+
+  function updateProgress() {
+    const total = items.length;
+    $('bar').style.width = total ? (100 * done / total) + '%' : '0';
+    const ok = items.filter((i) => i.text).length;
+    $('summary').textContent = `共 ${total} 份，已處理 ${done}，解出 ${ok}`;
+    $('zipAll').disabled = ok === 0 || done < total;
+    if (ready) setStatus(done < total ? `解碼中… ${done} / ${total}` : `完成：${total} 份中解出 ${ok} 份。`);
+  }
+
+  function addFiles(files) {
+    const list = [...files].filter((f) => /\.ods$/i.test(f.name));
+    if (!list.length) { setStatus('沒有找到 .ods 檔案。'); return; }
+    $('toolbar').hidden = false; $('table').hidden = false;
+    for (const f of list) {
+      const it = { id: items.length, file: f, path: f.webkitRelativePath || f.relPath || f.name, status: null, text: '', chars: 0 };
+      it.tr = document.createElement('tr');
+      items.push(it);
+      $('rows').appendChild(it.tr);
+      renderRow(it);
+      queue.push(it);
+    }
+    updateProgress();
+    pump();
+  }
+
+  async function pump() {
+    if (!ready || busy || !queue.length) return;
+    busy = true;
+    const it = queue.shift();
+    const bytes = new Uint8Array(await it.file.arrayBuffer());
+    worker.postMessage({ id: it.id, bytes }, [bytes.buffer]);
+  }
+
+  function renderRow(it) {
+    const [label, cls] = it.status ? (LABEL[it.status] || [it.status, 'st-bad']) : ['等待中', ''];
+    it.tr.innerHTML = '';
+    const td = (txt, c) => { const e = document.createElement('td'); if (c) e.className = c; e.textContent = txt; it.tr.appendChild(e); return e; };
+    td(it.path, 'name');
+    td(label, 'c-status ' + cls);
+    td(it.status ? String(it.chars) : '', 'num');
+    const act = td('', 'act');
+    if (it.text) {
+      const v = document.createElement('button'); v.textContent = '檢視'; v.onclick = () => show(it); act.appendChild(v);
+      act.appendChild(document.createTextNode(' '));
+      const d = document.createElement('button'); d.textContent = '下載'; d.onclick = () => download(it); act.appendChild(d);
+    }
+  }
+
+  const txtName = (p) => p.replace(/\.ods$/i, '.txt');
+  // 加 BOM，舊版 Windows 記事本才會正確辨識為 UTF-8
+  const txtBlob = (s) => new Blob(['﻿' + s], { type: 'text/plain;charset=utf-8' });
+
+  function save(blob, name) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+  function download(it) { save(txtBlob(it.text), txtName(it.path.split('/').pop())); }
+
+  let current = null;
+  function show(it) {
+    current = it;
+    $('dlgTitle').textContent = it.path;
+    $('dlgText').textContent = it.text;
+    $('dlg').showModal();
+  }
+  $('dlgClose').onclick = () => $('dlg').close();
+  $('dlgDl').onclick = () => current && download(current);
+
+  $('zipAll').onclick = async () => {
+    const zip = new JSZip();
+    for (const it of items) if (it.text) zip.file(txtName(it.path), '﻿' + it.text);
+    save(await zip.generateAsync({ type: 'blob' }), '解碼輸出.zip');
+  };
+
+  $('pickFiles').onchange = (e) => { addFiles(e.target.files); e.target.value = ''; };
+  $('pickDir').onchange = (e) => { addFiles(e.target.files); e.target.value = ''; };
+
+  // 拖曳：支援整個資料夾（逐層讀取）
+  const drop = $('drop');
+  drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+  drop.addEventListener('drop', async (e) => {
+    e.preventDefault(); drop.classList.remove('over');
+    const entries = [...e.dataTransfer.items].map((i) => i.webkitGetAsEntry && i.webkitGetAsEntry()).filter(Boolean);
+    if (!entries.length) { addFiles(e.dataTransfer.files); return; }
+    const out = [];
+    const walk = async (entry, prefix) => {
+      if (entry.isFile) {
+        const f = await new Promise((res, rej) => entry.file(res, rej));
+        f.relPath = prefix + f.name; out.push(f);
+      } else if (entry.isDirectory) {
+        const reader = entry.createReader();
+        let batch;
+        do {
+          batch = await new Promise((res, rej) => reader.readEntries(res, rej));
+          for (const c of batch) await walk(c, prefix + entry.name + '/');
+        } while (batch.length);
+      }
+    };
+    for (const en of entries) await walk(en, '');
+    addFiles(out);
+  });
+})();
+</script>
+</body>
+</html>
