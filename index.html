@@ -65,11 +65,14 @@
   dialog::backdrop { background: rgb(0 0 0 / .45); }
   .dlg-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
   .dlg-head h2 { font-size: 1rem; margin: 0; word-break: break-all; }
-  pre {
-    margin: 0; padding: 16px; overflow: auto; max-height: calc(100vh - 160px);
-    white-space: pre-wrap; word-break: break-all;
-    font: 15px/1.8 "Noto Sans Mono CJK TC", "MingLiU", "Microsoft JhengHei", monospace;
+  /* 公文預覽：依原文分段；縮排以「半形欄」計，1 欄 = 0.5em（全形字 1em）。
+     條列的凸排用 padding-left（續行位置）+ 負的 text-indent（首行退回符號處）。 */
+  .doc {
+    padding: 20px 24px; overflow: auto; max-height: calc(100vh - 160px);
+    font: 17px/1.9 "標楷體", "DFKai-SB", "BiauKai", "Noto Serif TC", "PMingLiU", serif;
   }
+  .doc p { margin: 0 0 .6em; white-space: pre-wrap; word-break: break-all; }
+  @media (max-width: 600px) { .doc { padding: 14px 16px; font-size: 16px; } }
   details { margin-top: 32px; color: var(--muted); }
   details p, details li { font-size: .95rem; }
   @media (max-width: 600px) {
@@ -120,7 +123,7 @@
     <h2 id="dlgTitle"></h2>
     <div class="btns"><button id="dlgDl">下載 .txt</button><button id="dlgClose">關閉</button></div>
   </div>
-  <pre id="dlgText"></pre>
+  <div class="doc" id="dlgText"></div>
 </dialog>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
@@ -141,7 +144,7 @@
     if (m.type === 'ready') { ready = true; setStatus('就緒，請選擇檔案。'); pump(); return; }
     if (m.type === 'fatal') { setStatus('解碼環境載入失敗：' + m.error + '（請確認網路連線後重新整理）'); return; }
     const it = items[m.id];
-    Object.assign(it, { status: m.status, text: m.text, chars: m.chars });
+    Object.assign(it, { status: m.status, text: m.text, chars: m.chars, paras: m.paras || [] });
     renderRow(it);
     done++; busy = false;
     updateProgress();
@@ -214,7 +217,15 @@
   function show(it) {
     current = it;
     $('dlgTitle').textContent = it.path;
-    $('dlgText').textContent = it.text;
+    const box = $('dlgText');
+    box.replaceChildren(...it.paras.map((p) => {
+      const el = document.createElement('p');
+      el.textContent = p.text;
+      el.style.paddingLeft = (p.rest / 2) + 'em';
+      el.style.textIndent = ((p.first - p.rest) / 2) + 'em';
+      return el;
+    }));
+    box.scrollTop = 0;
     $('dlg').showModal();
   }
   $('dlgClose').onclick = () => $('dlg').close();

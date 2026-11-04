@@ -10,7 +10,7 @@
   - 正文依版面重排：每行 38 字元、首行 4 空格縮排（與原系統 .txt 匯出一致）
   - 保留文件內的空格
 """
-import io, sys, os, struct, glob, time
+import io, sys, os, re, struct, glob, time
 try:
     for _s in (sys.stdout, sys.stderr):
         if _s is not None and hasattr(_s, 'reconfigure'):
@@ -134,11 +134,11 @@ def decode_status(data, cache=None, allow_full_sweep=False):
             valid = sum(1 for c in codes if big5(c) != '\ufffd')
             ratio = valid / max(1, len(codes))
             if ratio > 0.8 and (best is None or len(codes) > best[0]):
-                best = (len(codes), ratio, codes)
+                best = (len(codes), ratio, codes, off, cnt)
         except Exception:
             continue
     if best is not None and best[1] > 0.92 and len(best[2]) >= 20:
-        return best[2], STATUS_FAST
+        return _with_pos(best[2], _parse_recs(data, best[3] + 4, best[4])), STATUS_FAST
     # 自動反推 count0
     try:
         codes = auto_decode(data, cache=cache, allow_full_sweep=allow_full_sweep)
@@ -492,19 +492,20 @@ def auto_decode(data, cache=None, allow_full_sweep=False):
         r = _search_areas(data, [p], cache, False, rare=rare)
         if r:
             take(r)
+    recs_of = {o: r for o, _c, r in parsed}
     if not texts:
-        return tpl
-    out = []
-    for _off, codes in sorted(texts):
+        return _with_pos(tpl, recs_of[first[2]]) if first[0] is tpl else tpl
+    out = Decoded()
+    out.pos = []
+    for off, codes in sorted(texts):
         if out:
             out.append(PARA)
+            out.pos.append(None)
         out.extend(codes)
+        out.pos.extend((r[8], r[9]) for r in recs_of[off][:len(codes)])
     return out
 
 PARA = 0x10000      # 區與區之間的分段記號（不在 16 位元字碼範圍內，不會與真字碼衝突）
-
-def _is_template(codes):
-    return '[＠' in ''.join(big5(c) for c in codes)
 
 def _is_template(codes):
     return '[＠' in ''.join(big5(c) for c in codes)
@@ -566,32 +567,126 @@ def big5(code):
     return chr(code) if 0x20 <= code < 0x7f else (' ' if code in (0, 0x0d, 0x0a) else '\ufffd')
 
 # ---------------------------- 重排 ----------------------------
-LINE_WIDTH = 38      # 每行字元數（與原系統 .txt 匯出一致）
-INDENT = '    '      # 首行縮排（4 空格）
+# 依原廠 .txt 匯出的版面：每行 72 個半形寬（全形字算 2）、段間空一行、條列凸排。
+# 字碼中的 0x0D 就是原文的分段（硬換行），以它分段，不靠猜。
+LINE_COLS = 72
 
-def reflow(text):
-    """依版面重排：首行縮排 4 空格、每行 38 字元換行。"""
-    lines = []
-    pos = 0
-    n = len(text)
-    first = True
-    while pos < n:
-        width = LINE_WIDTH - len(INDENT) if first else LINE_WIDTH
-        # 找斷點：滿寬度或最後一個字
-        end = min(pos + width, n)
-        if end < n:
-            # 避免在文末前強制斷行（保留最後一段）
-            pass
-        line = text[pos:end]
-        lines.append((INDENT if first else '') + line)
-        first = False
-        pos = end
-    return '\r\n'.join(lines)
+# 條列層級：(層級, 項目符號樣式)。首行縮排 = 2*(層級-1)，續行再縮進符號寬度（凸排）。
+_LIST_MARKERS = [
+    (1, re.compile(r'[一二三四五六七八九十]+、')),
+    (2, re.compile(r'[(（][一二三四五六七八九十]+[)）]')),
+    (3, re.compile(r'[0-9０-９]+、')),
+    (4, re.compile(r'[(（][0-9０-９]+[)）]')),
+]
+# 非條列段落：保留原文開頭的空白（原廠匯出也是原樣保留，如「　　關於」），續行頂格
+
+def _cols(text):
+    """顯示寬度：半形 1、全形 2（以 cp950 位元組數計，與原廠一致）。"""
+    n = 0
+    for ch in text:
+        try:
+            n += len(ch.encode('cp950'))
+        except UnicodeEncodeError:
+            n += 2
+    return n
+
+class Decoded(list):
+    """解出的字碼；pos 為每個字碼的版面座標 (y=di, x=ebp8)，PARA 處為 None。"""
+    pos = None
+
+def _with_pos(codes, recs):
+    d = Decoded(codes)
+    d.pos = [(r[8], r[9]) for r in recs[:len(codes)]]
+    return d
+
+def _segment_cols(pos):
+    """一個記錄區內，回傳 (各字的縮排欄數, 是否為版面上的行首)。
+    原廠匯出的縮排就是作者實際排出來的位置（同一範本裡「（一）」有人頂格、有人縮兩格），
+    所以從座標換算，比固定規則準（622 組原廠匯出實測：各層縮排吻合 99%+）。
+    公文有橫式（沿 x 走）與直式（沿 y 走），先判方向再取沿字方向的座標。"""
+    n = len(pos)
+    if n < 2:
+        return [0] * n, [True] * n
+    h = sum(1 for a, b in zip(pos, pos[1:]) if a[0] == b[0])
+    v = sum(1 for a, b in zip(pos, pos[1:]) if a[1] == b[1])
+    a = [p[1] if h >= v else p[0] for p in pos]
+    steps = sorted(d for d in (b - c for c, b in zip(a, a[1:])) if 0 < d < 200)
+    step = steps[len(steps) // 2] if steps else 66    # 全形字距的中位數 = 2 欄
+    starts = [0] + [i for i in range(1, n) if a[i] < a[i - 1]]
+    margin = min(a[i] for i in starts)
+    cols = [max(0, round((x - margin) / step * 2)) for x in a]
+    is_start = [False] * n
+    for i in starts:
+        is_start[i] = True
+    return cols, is_start
+
+def paragraphs(codes):
+    """切段並判定條列層級。回傳 [{'level','marker','text','first','rest'}]；
+    level 0 為一般段落，first/rest 為首行與續行的縮排（半形欄數）。
+    有座標（Decoded.pos）時縮排依原文版面；沒有時退回固定規則（每層 2 欄、續行凸排符號寬）。"""
+    pos = getattr(codes, 'pos', None)
+    codes = list(codes)
+    paras = []
+    seg_start = 0
+    for k in range(len(codes) + 1):
+        if k < len(codes) and codes[k] != PARA:
+            continue
+        seg = codes[seg_start:k]
+        seg_pos = pos[seg_start:k] if pos else None
+        if seg_pos and all(seg_pos):
+            cols, is_start = _segment_cols(seg_pos)
+        else:
+            cols = is_start = None
+        cur = []
+        for i, c in enumerate(seg + [0x0D]):
+            if c not in (0x0D, 0x0A):
+                cur.append(i)
+                continue
+            text = ''.join(big5(seg[j]) for j in cur).rstrip()
+            idx, cur = cur, []
+            body = text.lstrip(' 　')
+            if not body:
+                continue
+            level, marker = 0, ''
+            for lv, pat in _LIST_MARKERS:
+                m = pat.match(body)
+                if m:
+                    level, marker = lv, m.group(0)
+                    break
+            lead = text[:len(text) - len(body)]
+            if level:
+                first = 2 * (level - 1)
+                rest = first + _cols(marker)
+            else:
+                first, rest = 0, 0
+            if cols:
+                # 首行：第一個字（含開頭空白）的位置；續行：段內第二個版面行首的位置
+                first = cols[idx[0]]
+                second = [j for j in idx[1:] if is_start[j]]
+                if second:
+                    rest = cols[second[0]]
+                elif level:
+                    rest = first + _cols(lead) + _cols(marker)
+            paras.append({'level': level, 'marker': marker, 'text': text,
+                          'first': first, 'rest': rest})
+        seg_start = k + 1
+    return paras
+
+def _wrap(p, cols=LINE_COLS):
+    lines, line, w = [], ' ' * p['first'], p['first']
+    for ch in p['text']:
+        cw = _cols(ch)
+        if w + cw > cols and line.strip():
+            lines.append(line.rstrip())
+            line, w = ' ' * p['rest'], p['rest']
+        line += ch
+        w += cw
+    lines.append(line.rstrip())
+    return lines
 
 def render(codes):
-    """字碼轉成輸出文字：各區分段重排，段間空一行。"""
-    text = ''.join(big5(c) for c in codes)
-    return '\r\n\r\n'.join(reflow(p) for p in text.split('\n'))
+    """字碼轉成輸出文字：依原文分段、條列凸排、每行 72 半形寬、段間空一行。"""
+    return '\r\n\r\n'.join('\r\n'.join(_wrap(p)) for p in paragraphs(codes))
 
 # ---------------------------- 批次 ----------------------------
 def collect_ods(args):

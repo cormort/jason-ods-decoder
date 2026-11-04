@@ -18,13 +18,17 @@ ods_batch.np = np
 ods_batch._ensure_tables()
 _cache = set()   # 同一批同範本檔案共用種子快取，第二份起會快很多
 
+import json
+
 def decode_one(buf):
     data = buf.to_bytes()
     codes, status = ods_batch.decode_status(data, cache=_cache)
     if not codes:
-        return status, '', 0
+        return status, '', 0, '[]'
     n = sum(1 for c in codes if c != ods_batch.PARA)
-    return status, ods_batch.render(codes) + '\\r\\n', n
+    paras = [{'text': p['text'], 'first': p['first'], 'rest': p['rest']}
+             for p in ods_batch.paragraphs(codes)]
+    return status, ods_batch.render(codes) + '\\r\\n', n, json.dumps(paras, ensure_ascii=False)
 `);
 }
 
@@ -40,11 +44,11 @@ onmessage = async (ev) => {
   try {
     const fn = pyodide.globals.get('decode_one');
     const res = fn(bytes);
-    const [status, text, chars] = res.toJs();
+    const [status, text, chars, parasJson] = res.toJs();
     res.destroy();
     fn.destroy();
-    postMessage({ type: 'result', id, status, text, chars, ms: performance.now() - t0 });
+    postMessage({ type: 'result', id, status, text, chars, paras: JSON.parse(parasJson), ms: performance.now() - t0 });
   } catch (e) {
-    postMessage({ type: 'result', id, status: 'error', text: '', chars: 0, error: String(e), ms: performance.now() - t0 });
+    postMessage({ type: 'result', id, status: 'error', text: '', chars: 0, paras: [], error: String(e), ms: performance.now() - t0 });
   }
 };
