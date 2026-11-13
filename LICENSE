@@ -1,0 +1,30 @@
+MIT License
+
+Copyright (c) 2026 cormort
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
+補充說明（非授權條款的一部分，僅供理解本專案範圍）：
+
+本專案為獨立實作，與捷成科技股份有限公司及其任何繼受人無關，未經其授權
+或背書。專案不包含、也不提供原廠程式、字型或範本檔；僅就 .ods 檔案的格式
+作判別與文字取出，供讀取使用者或所屬機關合法持有的舊公文檔（原系統已停產，
+屬檔案保存與格式相容用途）。使用時請遵守著作權法及所屬機關之資通安全規定。

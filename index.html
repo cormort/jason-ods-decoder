@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>捷成公文 ODS 解碼器</title>
-<meta name="description" content="在瀏覽器內讀取捷成公文系統 .ods 檔的本文，檔案不會上傳。">
+<title>捷成公文 ODS 解碼器（非官方）</title>
+<meta name="description" content="在瀏覽器內讀取捷成公文系統 .ods 檔的本文，檔案不會上傳。非官方獨立實作，供讀取自有的舊公文檔。">
 <style>
   :root {
     --bg: #f7f7f5; --panel: #ffffff; --text: #1f2328; --muted: #5d636b;
@@ -25,6 +25,12 @@
   }
   main { max-width: 960px; margin: 0 auto; padding: 32px 16px 64px; }
   h1 { font-size: 1.6rem; margin: 0 0 4px; }
+  .unofficial {
+    display: inline-block; vertical-align: middle; margin-left: 8px;
+    font-size: .45em; font-weight: 600; letter-spacing: .08em;
+    color: var(--warn); border: 1px solid currentColor; border-radius: 999px;
+    padding: 2px 10px;
+  }
   .lead { color: var(--muted); margin: 0 0 24px; }
   .privacy {
     border-left: 4px solid var(--ok); background: var(--panel);
@@ -82,10 +88,10 @@
 </head>
 <body>
 <main>
-  <h1>捷成公文 ODS 解碼器</h1>
+  <h1>捷成公文 ODS 解碼器<span class="unofficial">非官方</span></h1>
   <p class="lead">讀取捷成公文系統（JSODS / ODSVIEW）的 .ods 公文檔，取出本文另存成 .txt。</p>
 
-  <div class="privacy">🔒 檔案只在你的瀏覽器裡解碼，<strong>不會上傳到任何伺服器</strong>。第一次開啟需下載約 15 MB 的執行環境，之後瀏覽器會快取。</div>
+  <div class="privacy">🔒 檔案只在你的瀏覽器裡解碼，<strong>不會上傳到任何伺服器</strong>。第一次開啟需從 CDN 下載約 15 MB 的開源執行環境（Pyodide／numpy／JSZip），之後瀏覽器會快取。</div>
 
   <div class="drop" id="drop">
     <p>把 .ods 檔或整個資料夾拖曳到這裡</p>
@@ -112,8 +118,19 @@
     <ul>
       <li>只處理捷成公文格式（檔頭 <code>JASON</code>）。同副檔名的 LibreOffice 試算表會顯示「非捷成格式」，請用試算表軟體開啟。</li>
       <li>輸出的是公文的文字內容（本文；函稿含主旨與說明），不含發文機關、日期、文號等套印欄位與版面。</li>
+      <li>解碼結果不保證與原系統匯出逐字一致；重要公文請與紙本或原檔核對後再使用。</li>
       <li>每份約 1–5 秒。大量檔案建議用桌面版批次工具。</li>
-      <li>本工具與原廠無關，僅為讓停產系統的舊檔仍可閱讀。</li>
+    </ul>
+  </details>
+
+  <details>
+    <summary>免責聲明與使用範圍</summary>
+    <ul>
+      <li>本工具是<strong>非官方</strong>的獨立實作，與捷成科技股份有限公司及其任何繼受人無關，未經其授權或背書。</li>
+      <li>不包含、也不提供原廠程式、字型或範本檔；只做檔案格式的判別與文字取出，不在您的電腦上安裝或執行任何原廠軟體。</li>
+      <li>請僅用於讀取<strong>您或所屬機關合法持有</strong>的舊公文檔（原系統已停產，屬檔案保存與格式相容用途）。請勿用於處理您無權處理的檔案，或將公文內容公開散布。</li>
+      <li>本工具免費、非商業提供，依「現狀」提供，不對解碼結果、可用性或特定用途適用性作任何明示或默示的擔保。</li>
+      <li>在公務環境使用前，請先確認符合機關資通安全規定：本頁會從 jsDelivr／cdnjs 下載 Pyodide、numpy 與 JSZip 執行環境，必要時可改為自架（把 <code>worker.js</code> 與頁面中的 CDN 網址換成內部鏡像）。</li>
     </ul>
   </details>
 </main>
