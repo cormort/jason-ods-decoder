@@ -91,7 +91,7 @@
   <h1>捷成公文 ODS 解碼器<span class="unofficial">非官方</span></h1>
   <p class="lead">讀取捷成公文系統（JSODS / ODSVIEW）的 .ods 公文檔，取出本文另存成 .txt。</p>
 
-  <div class="privacy">🔒 檔案只在你的瀏覽器裡解碼，<strong>不會上傳到任何伺服器</strong>。第一次開啟需從 CDN 下載約 15 MB 的開源執行環境（Pyodide／numpy／JSZip），之後瀏覽器會快取。</div>
+  <div class="privacy">🔒 檔案只在你的瀏覽器裡解碼，<strong>不會上傳到任何伺服器</strong>。執行環境（Pyodide／numpy／JSZip 約 25 MB）<strong>自架在本站</strong>，不連任何外部 CDN；第一次開啟會下載一次，之後瀏覽器會快取。</div>
 
   <div class="drop" id="drop">
     <p>把 .ods 檔或整個資料夾拖曳到這裡</p>
@@ -130,7 +130,7 @@
       <li>不包含、也不提供原廠程式、字型或範本檔；只做檔案格式的判別與文字取出，不在您的電腦上安裝或執行任何原廠軟體。</li>
       <li>請僅用於讀取<strong>您或所屬機關合法持有</strong>的舊公文檔（原系統已停產，屬檔案保存與格式相容用途）。請勿用於處理您無權處理的檔案，或將公文內容公開散布。</li>
       <li>本工具免費、非商業提供，依「現狀」提供，不對解碼結果、可用性或特定用途適用性作任何明示或默示的擔保。</li>
-      <li>在公務環境使用前，請先確認符合機關資通安全規定：本頁會從 jsDelivr／cdnjs 下載 Pyodide、numpy 與 JSZip 執行環境，必要時可改為自架（把 <code>worker.js</code> 與頁面中的 CDN 網址換成內部鏡像）。</li>
+      <li>在公務環境使用前，請先確認符合機關資通安全規定。本頁的執行環境（Pyodide、numpy、JSZip）已自架在本站 <code>./pyodide/</code> 與 <code>./jszip.min.js</code>，<strong>不會連外下載任何程式庫</strong>；若機關要求完全內網，可把整個資料夾放到內部網頁伺服器（需設定 <code>.wasm</code> 的 MIME type 為 <code>application/wasm</code>）。</li>
     </ul>
   </details>
 </main>
@@ -143,7 +143,7 @@
   <div class="doc" id="dlgText"></div>
 </dialog>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="./jszip.min.js"></script>
 <script>
 (() => {
   const $ = (id) => document.getElementById(id);

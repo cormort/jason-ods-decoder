@@ -1,11 +1,12 @@
 // 在背景執行緒載入 Pyodide 與解碼器，避免解碼時畫面卡住。
 // 檔案內容只在瀏覽器記憶體中處理，不會傳到任何伺服器。
-importScripts('https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js');
+// 執行環境自架：所有檔案都在本站 ./pyodide/ 底下，不連任何外部 CDN。
+importScripts('./pyodide/pyodide.js');
 
 let pyodide = null;
 
 async function init() {
-  pyodide = await loadPyodide();
+  pyodide = await loadPyodide({ indexURL: './pyodide/' });
   await pyodide.loadPackage('numpy');
   const src = await (await fetch('decoder.py')).text();
   pyodide.FS.writeFile('/home/pyodide/ods_batch.py', src);

@@ -5,10 +5,12 @@
 
 **線上使用：** https://cormort.github.io/jason-ods-decoder/
 
-## 隱私
+## 隱私與離線
 
 解碼完全在瀏覽器內進行（[Pyodide](https://pyodide.org/) 在瀏覽器裡執行 Python），
-**檔案不會上傳到任何伺服器**。頁面只會從 CDN（jsDelivr／cdnjs）下載 Pyodide、numpy 與 JSZip。
+**檔案不會上傳到任何伺服器**。執行環境（Pyodide 0.26.4、numpy、JSZip，約 25 MB）**自架在本站**
+`./pyodide/` 與 `./jszip.min.js`，**不連任何外部 CDN**，適合來源需可控的公務環境。
+整個資料夾可原封不動放進內部網頁伺服器使用（只需把 `.wasm` 的 MIME type 設為 `application/wasm`）。
 
 ## 使用方式
 
@@ -32,9 +34,8 @@
 - 請僅用於讀取**您或所屬機關合法持有**的舊公文檔（原系統已停產，屬檔案保存與格式相容用途）。
   請勿用於處理您無權處理的檔案，或將公文內容公開散布。
 - 本工具免費、非商業提供，依「現狀」提供，不對解碼結果、可用性或特定用途適用性作任何擔保。
-- 在公務環境使用前，請先確認符合機關資通安全規定。頁面預設從公有 CDN 載入執行環境；
-  若機關要求來源可控，可把 `worker.js` 的 `importScripts(... pyodide ...)` 與 `index.html` 的 JSZip
-  網址換成內部鏡像（自架 Pyodide 即可，其餘程式不必修改）。
+- 在公務環境使用前，請先確認符合機關資通安全規定。本站已自架全部執行環境，不會連外下載程式庫；
+  若需完全內網，把整個資料夾放到內部網頁伺服器即可（`.wasm` 的 MIME type 需為 `application/wasm`）。
 
 ## 檔案
 
@@ -43,6 +44,8 @@
 | `index.html` | 頁面與介面 |
 | `worker.js` | 在背景執行緒載入 Pyodide 並解碼 |
 | `decoder.py` | 解碼核心（純 Python + numpy，也可在本機直接執行：`python decoder.py 資料夾 輸出資料夾`） |
+| `pyodide/` | 自架的 Python 執行環境（Pyodide 0.26.4 + numpy wheel + stdlib，約 24 MB） |
+| `jszip.min.js` | 自架的 ZIP 打包程式庫 |
 | `LICENSE` | MIT 授權（含範圍補充說明） |
 
 本機預覽：`python -m http.server` 後開啟 `http://localhost:8000`（Web Worker 無法用 `file://` 開啟）。
