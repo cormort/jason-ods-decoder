@@ -13,7 +13,7 @@
 授權：MIT（見 LICENSE）。本程式為獨立實作，與原廠及其繼受人無關；
 不含、不提供原廠程式、字型或範本檔，僅就檔案格式作判別與文字取出。
 """
-import io, sys, os, re, struct, glob, time
+import io, sys, os, re, struct, glob, time, functools
 try:
     for _s in (sys.stdout, sys.stderr):
         if _s is not None and hasattr(_s, 'reconfigure'):
@@ -44,23 +44,31 @@ def s8(b):
 def find_record_areas(data):
     """找所有記錄區：2-byte 數量 + 00 00 + 字記錄（型態1=35B / 型態0=21B）"""
     n = len(data)
-    for off in range(0x100, n - 30):
-        cnt = struct.unpack('<H', data[off:off+2])[0]
-        if not (1 <= cnt <= 500) or data[off+2:off+4] != b'\x00\x00':
+    limit = n - 30
+    pos = 0x102
+    while pos < limit + 2:
+        found = data.find(b'\x00\x00', pos)
+        if found == -1:
+            break
+        off = found - 2
+        pos = found + 1
+        if off < 0x100 or off >= limit:
             continue
-        base = off + 4
-        p = base
+        cnt = struct.unpack_from('<H', data, off)[0]
+        if not (1 <= cnt <= 500):
+            continue
+        p = off + 4
         ok = True
         for _ in range(min(3, cnt)):
             if p + 15 > n:      # 要讀 data[p+14]，需 p+14 < n
                 ok = False
                 break
-            typ = data[p+14]
+            typ = data[p + 14]
             rlen = 35 if typ != 0 else 21
             if p + rlen > n:
                 ok = False
                 break
-            ctr = struct.unpack('<H', data[p+10:p+12])[0]
+            ctr = struct.unpack_from('<H', data, p + 10)[0]
             if ctr == 0 or ctr > 0x1000:
                 ok = False
                 break
@@ -69,54 +77,7 @@ def find_record_areas(data):
             yield off, cnt
 
 def decode_at(data, base, cnt):
-    out = []
-    count = 0x050A6440 + 0x200D8 + cnt   # 樣板貢獻 + 邊界常數 + 字數
-    k = 0
-    p = base
-    while k < cnt:
-        r = data[p:p+35]
-        if len(r) < 21:
-            break
-        typ = r[14]
-        rlen = 35 if typ != 0 else 21
-        if p + rlen > len(data):
-            break
-        r = data[p:p+rlen]
-        byte0, byte1, byte2 = r[0], r[1], r[2]
-        w33 = struct.unpack('<H', r[3:5])[0] & 0xFF
-        w34 = struct.unpack('<H', r[5:7])[0] & 0xFF
-        w35 = struct.unpack('<H', r[7:9])[0] & 0xFF
-        b31 = r[9]
-        di = struct.unpack('<H', r[10:12])[0]
-        ebp8 = struct.unpack('<H', r[12:14])[0]
-        X = struct.unpack('<H', r[15:17])[0]
-        if typ != 0:
-            byte2d, byte2e, byte2f = r[17], r[18], r[19]
-            byte26, byte27 = r[20], r[21]
-            d28 = struct.unpack('<I', r[22:26])[0]
-            coord1 = struct.unpack('<H', r[26:28])[0]
-            coord2 = struct.unpack('<H', r[28:30])[0]
-            byte0c = r[30]
-            w0e = struct.unpack('<H', r[31:33])[0]
-            w10 = struct.unpack('<H', r[33:35])[0]
-        else:
-            byte2d = byte2e = byte2f = 0
-            byte26 = byte27 = 0
-            d28 = 0xFFFFFF
-            coord1 = struct.unpack('<H', r[17:19])[0]
-            coord2 = struct.unpack('<H', r[19:21])[0]
-            byte0c = 0x64
-            w0e = w10 = 0
-        chk = (byte1 + byte0 + b31 + s8(byte2) + s8(w33) + s8(w34) + s8(w35) + di + ebp8 - 1) & 0xFFFF
-        count = (count + chk) & 0xFFFFFFFF
-        key = LFSR(count).next16()
-        code = X ^ key
-        sum16 = (byte2d + code + byte2e + byte2f + coord1 + coord2 + byte0c + w0e + w10) & 0xFFFF
-        count = (count + sum16 + d28 + byte26 + byte27) & 0xFFFFFFFF
-        out.append(code)
-        k += 1
-        p += rlen
-    return out
+    return _decode_recs(_parse_recs(data, base, cnt), 0x050A6440 + 0x200D8 + cnt)
 
 STATUS_FAST = 'fast'        # 已知樣板常數直接解出
 STATUS_CACHE = 'cache'      # 批次種子快取命中
@@ -133,20 +94,23 @@ def decode_status(data, cache=None, allow_full_sweep=False):
     best = None
     for off, cnt in find_record_areas(data):
         try:
-            codes = decode_at(data, off + 4, cnt)
+            recs = _parse_recs(data, off + 4, cnt)
+            if not recs:
+                continue
+            codes = _decode_recs(recs, 0x050A6440 + 0x200D8 + cnt)
             valid = sum(1 for c in codes if big5(c) != '\ufffd')
-            ratio = valid / max(1, len(codes))
+            ratio = valid / len(codes)
             if ratio > 0.8 and (best is None or len(codes) > best[0]):
-                best = (len(codes), ratio, codes, off, cnt)
+                best = (len(codes), ratio, codes, recs)
         except Exception:
             continue
     if best is not None and best[1] > 0.92 and len(best[2]) >= 20:
-        return _with_pos(best[2], _parse_recs(data, best[3] + 4, best[4])), STATUS_FAST
+        return _with_pos(best[2], best[3]), STATUS_FAST
     # 自動反推 count0
     try:
-        codes = auto_decode(data, cache=cache, allow_full_sweep=allow_full_sweep)
+        codes, from_cache = _auto_decode_with_status(data, cache=cache, allow_full_sweep=allow_full_sweep)
         if codes:
-            return codes, STATUS_AUTO
+            return codes, (STATUS_CACHE if from_cache else STATUS_AUTO)
     except Exception:
         pass
     return None, STATUS_UNKNOWN
@@ -162,25 +126,33 @@ def decode(data):
 
 # ---------------------------- 自動 count0 反推（2004 年代格式） ----------------------------
 
-def _s8(b):
-    return b if b < 0x80 else b - 0x100
+_s8 = s8
 
 def _find_areas(data, mincnt=8):
     n = len(data)
+    limit = n - 30
     areas = []
-    for off in range(0x100, n - 30):
-        cnt = struct.unpack('<H', data[off:off+2])[0]
+    pos = 0x102
+    while pos < limit + 2:
+        found = data.find(b'\x00\x00', pos)
+        if found == -1:
+            break
+        off = found - 2
+        pos = found + 1
+        if off < 0x100 or off >= limit:
+            continue
+        cnt = struct.unpack_from('<H', data, off)[0]
         # 上限原為 2000，但實測有本文區達 2053-2570 筆（「簽」類長公文），會被整個排除；
         # 放寬後仍有結構驗證（型態、ctr、座標、區長度不得超出檔案）把關。
-        if not (mincnt <= cnt <= 20000) or data[off+2:off+4] != b'\x00\x00':
+        if not (mincnt <= cnt <= 20000):
             continue
         p = off + 4
         ok = True
         for _ in range(min(4, cnt)):
-            if p + 35 > n:
+            if p + 21 > n:
                 ok = False
                 break
-            typ = data[p+14]
+            typ = data[p + 14]
             if typ not in (0, 1):
                 ok = False
                 break
@@ -188,16 +160,14 @@ def _find_areas(data, mincnt=8):
             if p + rlen > n:
                 ok = False
                 break
-            ctr = struct.unpack('<H', data[p+10:p+12])[0]
+            ctr = struct.unpack_from('<H', data, p + 10)[0]
             if not (0 < ctr <= 0x4000):
                 ok = False
                 break
             if rlen == 35:
-                c1 = struct.unpack('<H', data[p+26:p+28])[0]
-                c2 = struct.unpack('<H', data[p+28:p+30])[0]
+                c1, c2 = struct.unpack_from('<HH', data, p + 26)
             else:
-                c1 = struct.unpack('<H', data[p+17:p+19])[0]
-                c2 = struct.unpack('<H', data[p+19:p+21])[0]
+                c1, c2 = struct.unpack_from('<HH', data, p + 17)
             if c1 > 1000 or not (5 < c2 < 500):
                 ok = False
                 break
@@ -224,44 +194,54 @@ def _parse_recs(data, base, cnt):
     n = len(data)
     recs = []
     p = base
+    unpack_h = struct.unpack_from
     for _ in range(cnt):
-        r = data[p:p+35]
-        if len(r) < 21 or p + 35 > n:
+        if p + 21 > n:
             break
-        typ = r[14]
+        typ = data[p + 14]
         rlen = 35 if typ != 0 else 21
         if p + rlen > n:
             break
-        r = data[p:p+rlen]
-        byte0, byte1, byte2 = r[0], r[1], r[2]
-        w33 = struct.unpack('<H', r[3:5])[0] & 0xFF
-        w34 = struct.unpack('<H', r[5:7])[0] & 0xFF
-        w35 = struct.unpack('<H', r[7:9])[0] & 0xFF
-        b31 = r[9]
-        di = struct.unpack('<H', r[10:12])[0]
-        ebp8 = struct.unpack('<H', r[12:14])[0]
-        X = struct.unpack('<H', r[15:17])[0]
+        byte0, byte1, byte2 = data[p], data[p + 1], data[p + 2]
+        w33, w34, w35 = unpack_h('<HHH', data, p + 3)
+        w33 &= 0xFF
+        w34 &= 0xFF
+        w35 &= 0xFF
+        b31 = data[p + 9]
+        di, ebp8 = unpack_h('<HH', data, p + 10)
+        X = unpack_h('<H', data, p + 15)[0]
         if typ != 0:
-            byte2d, byte2e, byte2f = r[17], r[18], r[19]
-            byte26, byte27 = r[20], r[21]
-            d28 = struct.unpack('<I', r[22:26])[0]
-            coord1 = struct.unpack('<H', r[26:28])[0]
-            coord2 = struct.unpack('<H', r[28:30])[0]
-            byte0c = r[30]
-            w0e = struct.unpack('<H', r[31:33])[0]
-            w10 = struct.unpack('<H', r[33:35])[0]
+            byte2d, byte2e, byte2f = data[p + 17], data[p + 18], data[p + 19]
+            byte26, byte27 = data[p + 20], data[p + 21]
+            d28 = unpack_h('<I', data, p + 22)[0]
+            coord1, coord2 = unpack_h('<HH', data, p + 26)
+            byte0c = data[p + 30]
+            w0e, w10 = unpack_h('<HH', data, p + 31)
         else:
             byte2d = byte2e = byte2f = 0
             byte26 = byte27 = 0
             d28 = 0xFFFFFF
-            coord1 = struct.unpack('<H', r[17:19])[0]
-            coord2 = struct.unpack('<H', r[19:21])[0]
+            coord1, coord2 = unpack_h('<HH', data, p + 17)
             byte0c = 0x64
             w0e = w10 = 0
         recs.append((X, byte0, byte1, byte2, w33, w34, w35, b31, di, ebp8, typ,
                      byte2d, byte2e, byte2f, byte26, byte27, d28, coord1, coord2, byte0c, w0e, w10))
         p += rlen
     return recs
+
+def _decode_recs(recs, seed0):
+    count = seed0
+    out = []
+    for (X, byte0, byte1, byte2, w33, w34, w35, b31, di, ebp8, typ,
+         byte2d, byte2e, byte2f, byte26, byte27, d28, coord1, coord2, byte0c, w0e, w10) in recs:
+        chk = (byte1 + byte0 + b31 + s8(byte2) + s8(w33) + s8(w34) + s8(w35) + di + ebp8 - 1) & 0xFFFF
+        count = (count + chk) & 0xFFFFFFFF
+        key = LFSR(count).next16()
+        code = X ^ key
+        out.append(code)
+        sum16 = (byte2d + code + byte2e + byte2f + coord1 + coord2 + byte0c + w0e + w10) & 0xFFFF
+        count = (count + sum16 + d28 + byte26 + byte27) & 0xFFFFFFFF
+    return out
 
 def _lfsr_next16v(counts):
     s0 = counts & 0xFFFF
@@ -311,14 +291,19 @@ def _build_tables():
 
 _G, _S1A, _S1B, _S1C = None, None, None, None
 _S0ARR = None
+_KNOWN_IDXS = (0, 5, 8, 10, 15, 36, 37, 39, 40, 42, 85, 105, 112, 115, 116, 120, 127)
+_KNOWN_IDX_MASK = None
 
 def _ensure_tables():
-    global _G, _S1A, _S1B, _S1C, _S0ARR, np
+    global _G, _S1A, _S1B, _S1C, _S0ARR, _KNOWN_IDX_MASK, np
     if 'np' not in globals():
         import numpy as np
     if _G is None:
         _G, _S1A, _S1B, _S1C = _build_tables()
         _S0ARR = np.arange(65536, dtype=np.int64)
+        mask = np.zeros(256, dtype=bool)
+        mask[list(_KNOWN_IDXS)] = True
+        _KNOWN_IDX_MASK = mask
 
 _STARTERS = [
     0xA140, 0xA544, 0xA440, 0xA5BB, 0xA147, 0xC3F6, 0xA9D3, 0xAC64,
@@ -362,7 +347,7 @@ def _scan_starter_all(data, recs, starter, idx_max=130, nfilter=10, cache_idxs=N
     _ensure_tables()
     X0 = recs[0][0]
     r0 = recs[0]
-    chk0 = (r0[2] + r0[1] + r0[7] + _s8(r0[3]) + _s8(r0[4]) + _s8(r0[5]) + _s8(r0[6]) + r0[8] + r0[9] - 1) & 0xFFFF
+    chk0 = (r0[2] + r0[1] + r0[7] + s8(r0[3]) + s8(r0[4]) + s8(r0[5]) + s8(r0[6]) + r0[8] + r0[9] - 1) & 0xFFFF
     results = []
     key0 = X0 ^ starter
     target = (key0 ^ _G) & 0xFFFF
@@ -372,32 +357,40 @@ def _scan_starter_all(data, recs, starter, idx_max=130, nfilter=10, cache_idxs=N
         count0 = (seed - np.uint32(chk0)) & 0xFFFFFFFF
         hi = (count0 >> 24) & 0xFF
         if cache_idxs:
-            idx_arr = np.array(cache_idxs, dtype=np.int64)
-            cand = np.nonzero((s1_by_s0 >= 0) & np.isin(hi, idx_arr))[0]
-        elif idx_known:
-            idx_arr = np.array(idx_known, dtype=np.int64)
-            cand = np.nonzero((s1_by_s0 >= 0) & np.isin(hi, idx_arr))[0]
+            if len(cache_idxs) == 1:
+                idx_mask = (hi == cache_idxs[0])
+            else:
+                idx_mask = np.isin(hi, np.array(cache_idxs, dtype=np.int64))
+            cand = np.nonzero((s1_by_s0 >= 0) & idx_mask)[0]
+        elif idx_known is not None:
+            if idx_known is _KNOWN_IDXS:
+                idx_mask = _KNOWN_IDX_MASK[hi]
+            else:
+                idx_mask = np.isin(hi, np.array(idx_known, dtype=np.int64))
+            cand = np.nonzero((s1_by_s0 >= 0) & idx_mask)[0]
         else:
             cand = np.nonzero((s1_by_s0 >= 0) & (hi <= idx_max))[0]
         if len(cand) == 0:
             continue
         co = count0[cand].astype(np.uint32)
-        mask = np.ones(len(co), dtype=bool)
         for r in recs[:nfilter]:
             (X, byte0, byte1, byte2, w33, w34, w35, b31, di, ebp8, typ,
              byte2d, byte2e, byte2f, byte26, byte27, d28, coord1, coord2, byte0c, w0e, w10) = r
-            chk = (byte1 + byte0 + b31 + _s8(byte2) + _s8(w33) + _s8(w34) + _s8(w35) + di + ebp8 - 1) & 0xFFFF
+            chk = (byte1 + byte0 + b31 + s8(byte2) + s8(w33) + s8(w34) + s8(w35) + di + ebp8 - 1) & 0xFFFF
             co = (co + np.uint32(chk)) & 0xFFFFFFFF
             key = _lfsr_next16v(co)
             code = (X ^ key) & 0xFFFF
-            mask &= _valid_big5(code)
+            keep = _valid_big5(code)
+            if not keep.any():
+                cand = cand[:0]
+                break
+            cand = cand[keep]
+            co = co[keep]
+            code = code[keep]
             sum16 = (byte2d + code + byte2e + byte2f + coord1 + coord2 + byte0c + w0e + w10) & 0xFFFF
             co = (co + np.uint32(sum16) + np.uint32(d28) + np.uint32(byte26) + np.uint32(byte27)) & 0xFFFFFFFF
-            if not mask.any():
-                break
-        surv = np.nonzero(mask)[0]
-        for j in surv:
-            results.append((int(count0[cand[j]]), int(hi[cand[j]])))
+        for c_idx in cand:
+            results.append((int(count0[c_idx]), int(hi[c_idx])))
     return results
 
 def _full_sweep_count0(data, recs, idxs=(0, 5, 10, 40, 85), nfilter=12):
@@ -427,30 +420,16 @@ def _full_sweep_count0(data, recs, idxs=(0, 5, 10, 40, 85), nfilter=12):
     return results
 
 def _decode_with_seed(data, base, cnt, seed0):
-    recs = _parse_recs(data, base, cnt)
-    count = seed0
-    out = []
-    for (X, byte0, byte1, byte2, w33, w34, w35, b31, di, ebp8, typ,
-         byte2d, byte2e, byte2f, byte26, byte27, d28, coord1, coord2, byte0c, w0e, w10) in recs:
-        chk = (byte1 + byte0 + b31 + _s8(byte2) + _s8(w33) + _s8(w34) + _s8(w35) + di + ebp8 - 1) & 0xFFFF
-        count = (count + chk) & 0xFFFFFFFF
-        key = LFSR(count).next16()
-        code = X ^ key
-        out.append(code)
-        sum16 = (byte2d + code + byte2e + byte2f + coord1 + coord2 + byte0c + w0e + w10) & 0xFFFF
-        count = (count + sum16 + d28 + byte26 + byte27) & 0xFFFFFFFF
-    return out
+    return _decode_recs(_parse_recs(data, base, cnt), seed0)
 
 def _verify_area(data, off, cnt, recs, seed0):
     """以 seed0 解整區並檢查有效比例；通過回傳 codes，否則 None"""
-    codes = _decode_with_seed(data, off + 4, cnt, seed0)
+    codes = _decode_recs(recs, seed0)
     ratio = sum(1 for c in codes if big5(c) != '\ufffd') / max(1, len(codes))
     return codes if ratio > 0.9 else None
 
-def auto_decode(data, cache=None, allow_full_sweep=False):
-    """自動反推 count0 並解碼。
-    cache：set of (starter, IDX)，成功組合會加入；下次批次同範本先試快取。
-    allow_full_sweep：是否允許最慢的 2^24 全集掃描（預設關閉）。"""
+def _auto_decode_with_status(data, cache=None, allow_full_sweep=False):
+    """自動反推 count0 並解碼，回傳 (codes, from_cache)。"""
     global np
     if 'np' not in globals():
         import numpy as np
@@ -458,11 +437,13 @@ def auto_decode(data, cache=None, allow_full_sweep=False):
     areas.sort(key=lambda a: -a[1])
     big_areas = [a for a in areas if a[1] >= 30]
     if not big_areas:
-        return None
+        return None, False
 
     # 先解析一次各區記錄，避免重複
     parsed = [(off, cnt, _parse_recs(data, off + 4, cnt)) for off, cnt in big_areas]
     parsed = [(o, c, r) for o, c, r in parsed if len(r) >= 8]
+    if not parsed:
+        return None, False
 
     # 搜尋是「起始字優先」早退，常見起始字（全形空白）會先解開「此致 ○○處…」這類
     # 落款小區，而本文區的起始字是罕用的非文字記錄（0xC3F6 等）排在後面，於是本文被跳過。
@@ -473,7 +454,8 @@ def auto_decode(data, cache=None, allow_full_sweep=False):
     texts, tpl = [], None
     first = _search_areas(data, parsed, cache, allow_full_sweep)
     if first is None:
-        return None
+        return None, False
+    from_cache = first[3]
     # 其餘區只試快取與優先起始字：罕用起始字那一輪每個解不出的區要 ~0.9 秒，實測對其餘區沒有額外收穫。
     # 例外：若目前只解出範本區（還沒有本文），就要用完整起始字表，否則像法規稿的
     # 「修正「…辦法」」本文（起始字「修」在一般清單）會被跳過。
@@ -481,7 +463,7 @@ def auto_decode(data, cache=None, allow_full_sweep=False):
     tpl_cnt = None
     def take(found):
         nonlocal tpl, tpl_cnt
-        codes, cnt, off = found
+        codes, cnt, off, _fc = found
         if _is_template(codes):
             if tpl is None:
                 tpl, tpl_cnt = codes, cnt
@@ -497,7 +479,7 @@ def auto_decode(data, cache=None, allow_full_sweep=False):
             take(r)
     recs_of = {o: r for o, _c, r in parsed}
     if not texts:
-        return _with_pos(tpl, recs_of[first[2]]) if first[0] is tpl else tpl
+        return _with_pos(tpl, recs_of[first[2]]), from_cache
     out = Decoded()
     out.pos = []
     for off, codes in sorted(texts):
@@ -506,7 +488,13 @@ def auto_decode(data, cache=None, allow_full_sweep=False):
             out.pos.append(None)
         out.extend(codes)
         out.pos.extend((r[8], r[9]) for r in recs_of[off][:len(codes)])
-    return out
+    return out, from_cache
+
+def auto_decode(data, cache=None, allow_full_sweep=False):
+    """自動反推 count0 並解碼。
+    cache：set of (starter, IDX)，成功組合會加入；下次批次同範本先試快取。
+    allow_full_sweep：是否允許最慢的 2^24 全集掃描（預設關閉）。"""
+    return _auto_decode_with_status(data, cache=cache, allow_full_sweep=allow_full_sweep)[0]
 
 PARA = 0x10000      # 區與區之間的分段記號（不在 16 位元字碼範圍內，不會與真字碼衝突）
 
@@ -514,7 +502,7 @@ def _is_template(codes):
     return '[＠' in ''.join(big5(c) for c in codes)
 
 def _search_areas(data, parsed, cache, allow_full_sweep, rare=True):
-    """在給定的區中依起始字順序搜尋，回傳 (codes, 該區筆數)；都解不出回傳 None。"""
+    """在給定的區中依起始字順序搜尋，回傳 (codes, 該區筆數, off, from_cache)；都解不出回傳 None。"""
     # 0) 快取命中：只用快取中的 (starter, IDX) 組合，候選量極小
     if cache:
         for starter, IDX in list(cache):
@@ -523,7 +511,7 @@ def _search_areas(data, parsed, cache, allow_full_sweep, rare=True):
                 for seed0, IDX2 in res:
                     codes = _verify_area(data, off, cnt, recs, seed0)
                     if codes:
-                        return codes, cnt, off
+                        return codes, cnt, off, True
 
     # 1) 優先起始字（逐起始字早退，找到即停）
     for starter in _STARTERS_PRIORITY:
@@ -534,20 +522,19 @@ def _search_areas(data, parsed, cache, allow_full_sweep, rare=True):
                 if codes:
                     if cache is not None:
                         cache.add((starter, IDX))
-                    return codes, cnt, off
+                    return codes, cnt, off, False
 
     # 2) 其餘起始字（罕見開頭字；只試已知 IDX，兼顧速度）
     #    8/36/37/39/42/112/116 為 2026-08-02 窮舉實測到的 IDX，未列入就會漏解
-    known_idxs = (0, 5, 8, 10, 15, 36, 37, 39, 40, 42, 85, 105, 112, 115, 116, 120, 127)
     for starter in (_STARTERS_REST if rare else ()):
         for off, cnt, recs in parsed:
-            res = _scan_starter_all(data, recs, starter, nfilter=8, idx_known=known_idxs)
+            res = _scan_starter_all(data, recs, starter, nfilter=8, idx_known=_KNOWN_IDXS)
             for seed0, IDX in res:
                 codes = _verify_area(data, off, cnt, recs, seed0)
                 if codes:
                     if cache is not None:
                         cache.add((starter, IDX))
-                    return codes, cnt, off
+                    return codes, cnt, off, False
 
     # 3) 全集掃描（預設關閉；僅在明確要求時啟用）
     if allow_full_sweep:
@@ -556,9 +543,10 @@ def _search_areas(data, parsed, cache, allow_full_sweep, rare=True):
             for seed0, IDX, starter in res:
                 codes = _verify_area(data, off, cnt, recs, seed0)
                 if codes:
-                    return codes, cnt, off
+                    return codes, cnt, off, False
     return None
 
+@functools.lru_cache(maxsize=None)
 def big5(code):
     if code == PARA:
         return '\n'
@@ -583,15 +571,16 @@ _LIST_MARKERS = [
 ]
 # 非條列段落：保留原文開頭的空白（原廠匯出也是原樣保留，如「　　關於」），續行頂格
 
+@functools.lru_cache(maxsize=None)
+def _char_cols(ch):
+    try:
+        return len(ch.encode('cp950'))
+    except UnicodeEncodeError:
+        return 2
+
 def _cols(text):
     """顯示寬度：半形 1、全形 2（以 cp950 位元組數計，與原廠一致）。"""
-    n = 0
-    for ch in text:
-        try:
-            n += len(ch.encode('cp950'))
-        except UnicodeEncodeError:
-            n += 2
-    return n
+    return sum(_char_cols(ch) for ch in text)
 
 class Decoded(list):
     """解出的字碼；pos 為每個字碼的版面座標 (y=di, x=ebp8)，PARA 處為 None。"""
@@ -678,7 +667,7 @@ def paragraphs(codes):
 def _wrap(p, cols=LINE_COLS):
     lines, line, w = [], ' ' * p['first'], p['first']
     for ch in p['text']:
-        cw = _cols(ch)
+        cw = _char_cols(ch)
         if w + cw > cols and line.strip():
             lines.append(line.rstrip())
             line, w = ' ' * p['rest'], p['rest']
@@ -739,7 +728,8 @@ def _worker_decode(args):
     f, outdir, root = args
     rel = _rel_name(f, root)
     try:
-        data = open(_long_path(f), 'rb').read()
+        with open(_long_path(f), 'rb') as fh:
+            data = fh.read()
         codes, status = decode_status(data, cache=_worker_cache)
         if codes:
             outpath = os.path.join(outdir, os.path.splitext(rel)[0] + '.txt')
@@ -804,15 +794,17 @@ def main():
     if len(sys.argv) < 2:
         print(__doc__)
         return 1
-    files = collect_ods(sys.argv[1:])
     root = sys.argv[1] if os.path.isdir(sys.argv[1]) else None
-    # 輸出目錄：若第二個參數是目錄且第一個也是目錄，則當作輸出目錄
+    # 輸出目錄：若第二個參數不是既有檔案且非 .ods 檔，且第一個參數是目錄，則當作輸出目錄
     outdir = None
-    if len(sys.argv) >= 3 and os.path.isdir(sys.argv[1]) and not os.path.isfile(sys.argv[2]):
+    if (len(sys.argv) >= 3 and os.path.isdir(sys.argv[1])
+            and not os.path.isfile(sys.argv[2]) and not sys.argv[2].lower().endswith('.ods')):
         # 輸出資料夾不存在就建立；以前會默默改寫到目前工作目錄
         outdir = sys.argv[2]
         os.makedirs(outdir, exist_ok=True)
         files = collect_ods([sys.argv[1]])
+    else:
+        files = collect_ods(sys.argv[1:])
     if not files:
         print('沒有找到 .ods 檔案')
         return 1

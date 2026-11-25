@@ -4,11 +4,14 @@
 importScripts('./pyodide/pyodide.js');
 
 let pyodide = null;
+let decodeOne = null;
 
 async function init() {
   pyodide = await loadPyodide({ indexURL: './pyodide/' });
   await pyodide.loadPackage('numpy');
-  const src = await (await fetch('decoder.py')).text();
+  const resp = await fetch('decoder.py');
+  if (!resp.ok) throw new Error('無法載入 decoder.py: HTTP ' + resp.status);
+  const src = await resp.text();
   pyodide.FS.writeFile('/home/pyodide/ods_batch.py', src);
   pyodide.runPython(`
 import sys
@@ -31,6 +34,7 @@ def decode_one(buf):
              for p in ods_batch.paragraphs(codes)]
     return status, ods_batch.render(codes) + '\\r\\n', n, json.dumps(paras, ensure_ascii=False)
 `);
+  decodeOne = pyodide.globals.get('decode_one');
 }
 
 const ready = init().then(
@@ -42,14 +46,14 @@ onmessage = async (ev) => {
   const { id, bytes } = ev.data;
   await ready;
   const t0 = performance.now();
+  let res = null;
   try {
-    const fn = pyodide.globals.get('decode_one');
-    const res = fn(bytes);
+    res = decodeOne(bytes);
     const [status, text, chars, parasJson] = res.toJs();
-    res.destroy();
-    fn.destroy();
     postMessage({ type: 'result', id, status, text, chars, paras: JSON.parse(parasJson), ms: performance.now() - t0 });
   } catch (e) {
     postMessage({ type: 'result', id, status: 'error', text: '', chars: 0, paras: [], error: String(e), ms: performance.now() - t0 });
+  } finally {
+    if (res) res.destroy();
   }
 };
